@@ -1,0 +1,70 @@
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Prepare ledger data for Pages
+        run: |
+          mkdir -p site/public-ledger
+          cp -r public-ledger/* site/public-ledger/
+          python3 << 'PY'
+          import json
+          import pathlib
+
+          base = pathlib.Path('site/public-ledger')
+
+          def concat_jsonl(out_name, src_dir):
+              out = []
+              src = base / src_dir
+              if src.exists():
+                  for p in sorted(src.glob('*.jsonl')):
+                      with open(p, 'r', encoding='utf-8') as f:
+                          for line in f:
+                              line = line.strip()
+                              if line:
+                                  out.append(json.loads(line))
+              with open(base / out_name, 'w', encoding='utf-8') as f:
+                  json.dump(out, f, ensure_ascii=False)
+
+          concat_jsonl('predictions.json', 'predictions')
+          concat_jsonl('resolutions.json', 'resolutions')
+          PY
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

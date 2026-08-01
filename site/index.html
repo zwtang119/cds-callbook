@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CDS-Callbook · 公开预测账本</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --text: #c9d1d9;
+      --muted: #8b949e;
+      --border: #30363d;
+      --accent: #58a6ff;
+      --yes: #3fb950;
+      --no: #f85149;
+      --warn: #d29922;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .container { max-width: 960px; margin: 0 auto; padding: 2rem 1rem; }
+    h1 { margin: 0 0 0.25rem; font-size: 2rem; }
+    .tagline { color: var(--muted); margin-bottom: 1.5rem; }
+    .notice {
+      background: rgba(210, 153, 34, 0.12);
+      border: 1px solid var(--warn);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .notice strong { color: var(--warn); }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+    }
+    .card .label { font-size: 0.875rem; color: var(--muted); }
+    .card .value { font-size: 1.75rem; font-weight: 600; margin-top: 0.25rem; }
+    .warning {
+      color: var(--warn);
+      font-size: 0.9rem;
+      margin-top: 0.5rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      padding: 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--muted); font-weight: 500; font-size: 0.875rem; }
+    tr:last-child td { border-bottom: none; }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .badge.yes { background: rgba(63, 185, 80, 0.15); color: var(--yes); }
+    .badge.no { background: rgba(248, 81, 73, 0.15); color: var(--no); }
+    .badge.correct { background: rgba(63, 185, 80, 0.15); color: var(--yes); }
+    .badge.wrong { background: rgba(248, 81, 73, 0.15); color: var(--no); }
+    .badge.pending { background: rgba(139, 148, 158, 0.15); color: var(--muted); }
+    .empty { color: var(--muted); padding: 2rem; text-align: center; }
+    footer { margin-top: 2rem; color: var(--muted); font-size: 0.875rem; text-align: center; }
+    a { color: var(--accent); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>CDS-Callbook</h1>
+    <p class="tagline">公开预测账本 · 在答案揭晓之前，先把话撂下</p>
+
+    <div class="notice">
+      <strong>模拟盘声明：</strong> 本页面仅为公开记录与命中率展示，不涉及任何真实下注，不牵涉一分钱，也不构成投资建议。
+    </div>
+
+    <div class="stats">
+      <div class="card">
+        <div class="label">总样本 N</div>
+        <div class="value" id="stat-total">—</div>
+      </div>
+      <div class="card">
+        <div class="label">命中数</div>
+        <div class="value" id="stat-correct">—</div>
+      </div>
+      <div class="card">
+        <div class="label">命中率</div>
+        <div class="value" id="stat-rate">—</div>
+        <div class="warning" id="stat-warning"></div>
+      </div>
+    </div>
+
+    <h2>预测记录</h2>
+    <table id="predictions-table">
+      <thead>
+        <tr>
+          <th>问题</th>
+          <th>判断</th>
+          <th>写下时间</th>
+          <th>结果</th>
+          <th>对错</th>
+        </tr>
+      </thead>
+      <tbody id="predictions-body">
+        <tr><td colspan="5" class="empty">加载中…</td></tr>
+      </tbody>
+    </table>
+
+    <footer>
+      数据来自 <a href="https://github.com/zwtang119/cds-callbook">zwtang119/cds-callbook</a> ·
+      <a href="./public-ledger/accuracy.json">accuracy.json</a>
+    </footer>
+  </div>
+
+  <script>
+    const MIN_SAMPLE = 30;
+
+    async function loadJson(path) {
+      const res = await fetch(path);
+      if (!res.ok) throw new Error(`${path}: ${res.status}`);
+      return res.json();
+    }
+
+    function fmtRate(rate) {
+      if (rate === null || rate === undefined || Number.isNaN(rate)) return '—';
+      return `${(rate * 100).toFixed(1)}%`;
+    }
+
+    function fmtDate(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return iso;
+      return d.toLocaleDateString('zh-CN') + ' ' + d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function renderStats(acc) {
+      const total = Number(acc.total) || 0;
+      const correct = Number(acc.correct) || 0;
+      const rate = acc.rate;
+
+      document.getElementById('stat-total').textContent = total;
+      document.getElementById('stat-correct').textContent = correct;
+      document.getElementById('stat-rate').textContent = fmtRate(rate);
+
+      const warning = document.getElementById('stat-warning');
+      if (total < MIN_SAMPLE) {
+        warning.textContent = `N=${total}，样本不足，不具统计意义`;
+      } else {
+        warning.textContent = '';
+      }
+    }
+
+    function renderPredictions(predictions, resolutionsMap) {
+      const tbody = document.getElementById('predictions-body');
+      if (!predictions.length) {
+        tbody.innerHTML = `<tr><td colspan="5" class="empty">暂无预测记录。新预测会在官方结算前出现于此。</td></tr>`;
+        return;
+      }
+
+      const rows = predictions.slice().sort((a, b) => {
+        const ta = new Date(a.commit_ts_utc || 0).getTime();
+        const tb = new Date(b.commit_ts_utc || 0).getTime();
+        return tb - ta;
+      });
+
+      tbody.innerHTML = rows.map(p => {
+        const r = resolutionsMap[p.id];
+        const callBadge = p.call === 'YES'
+          ? '<span class="badge yes">YES</span>'
+          : '<span class="badge no">NO</span>';
+        const actual = r ? r.actual : '—';
+        const actualBadge = !r
+          ? '<span class="badge pending">待结算</span>'
+          : (r.actual === 'YES'
+            ? '<span class="badge yes">YES</span>'
+            : '<span class="badge no">NO</span>');
+        const resultBadge = !r
+          ? '<span class="badge pending">待结算</span>'
+          : (r.correct
+            ? '<span class="badge correct">命中</span>'
+            : '<span class="badge wrong">未命中</span>');
+        return `<tr>
+          <td>${escapeHtml(p.question)}</td>
+          <td>${callBadge}</td>
+          <td>${fmtDate(p.commit_ts_utc)}</td>
+          <td>${actualBadge}</td>
+          <td>${resultBadge}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    async function main() {
+      try {
+        const [acc, predictions] = await Promise.all([
+          loadJson('public-ledger/accuracy.json'),
+          loadJson('public-ledger/predictions.json').catch(() => [])
+        ]);
+
+        let resolutionsMap = {};
+        try {
+          const resolutions = await loadJson('public-ledger/resolutions.json');
+          resolutionsMap = Object.fromEntries(resolutions.map(r => [r.id, r]));
+        } catch (_) {
+          // 无结算记录时静默兜底
+        }
+
+        renderStats(acc);
+        renderPredictions(predictions, resolutionsMap);
+      } catch (err) {
+        document.getElementById('predictions-body').innerHTML =
+          `<tr><td colspan="5" class="empty">加载失败：${escapeHtml(err.message)}</td></tr>`;
+        console.error(err);
+      }
+    }
+
+    main();
+  </script>
+</body>
+</html>
