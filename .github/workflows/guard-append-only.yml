@@ -1,0 +1,50 @@
+name: guard-append-only
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine base ref
+        id: base
+        run: |
+          set -euo pipefail
+          event="${{ github.event_name }}"
+          if [ "$event" = "pull_request" ]; then
+            echo "base=origin/${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
+          elif [ "$event" = "push" ]; then
+            before="${{ github.event.before }}"
+            if [ "$before" != "0000000000000000000000000000000000000000" ]; then
+              echo "base=$before" >> "$GITHUB_OUTPUT"
+            elif git rev-parse --verify origin/main~1 >/dev/null 2>&1; then
+              echo "base=origin/main~1" >> "$GITHUB_OUTPUT"
+            elif git rev-parse --verify origin/main >/dev/null 2>&1; then
+              echo "base=origin/main" >> "$GITHUB_OUTPUT"
+            else
+              echo "base=" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "base=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: predictions/ only grows
+        run: |
+          set -euo pipefail
+          BASE="${{ steps.base.outputs.base }}"
+          if [ -z "$BASE" ]; then
+            echo "No usable base ref; append-only guard skipped (shallow history)."
+            exit 0
+          fi
+          echo "Comparing $BASE..HEAD for public-ledger/predictions/"
+          if git diff --name-status "$BASE" HEAD -- public-ledger/predictions/ | grep -E '^[MDR]'; then
+            echo "::error::predictions/ is append-only: modifications/deletions/renames are not allowed"
+            exit 1
+          fi
+          echo "predictions/ append-only check passed"
