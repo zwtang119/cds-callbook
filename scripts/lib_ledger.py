@@ -2,6 +2,7 @@
 
 不变式：
 - predictions/ append-only：同 id 拒绝（DupPrediction）；修正 = 新 id（如 *_v2）新行
+- resolutions/ append-only：同 id 拒绝；格式按 A.2 手写校验
 - 白名单 6 键手写校验（与私有侧 A.1 schema 语义一致），第 7 个键即拒
 """
 
@@ -12,8 +13,18 @@ from datetime import datetime
 from pathlib import Path
 
 ID_PATTERN = re.compile(r"^mk_[a-z0-9_]{3,40}$")
-REQUIRED_KEYS = {"id", "question", "call", "commit_ts_utc", "status"}
-WHITELIST_KEYS = REQUIRED_KEYS | {"version"}
+REQUIRED_CALL_KEYS = {"id", "question", "call", "commit_ts_utc", "status"}
+WHITELIST_CALL_KEYS = REQUIRED_CALL_KEYS | {"version"}
+
+REQUIRED_RESOLUTION_KEYS = {
+    "id",
+    "actual",
+    "correct",
+    "resolved_ts_utc",
+    "resolution_source",
+}
+WHITELIST_RESOLUTION_KEYS = REQUIRED_RESOLUTION_KEYS
+ALLOWED_RESOLUTION_SOURCES = {"official_manual", "kalshi_api"}
 
 
 class DupPrediction(Exception):
@@ -24,14 +35,18 @@ class LedgerReject(Exception):
     """记录违反公开账本格式（白名单/取值域/时间格式）。"""
 
 
+class ResolutionReject(Exception):
+    """resolution 行违反 A.2 格式。"""
+
+
 def validate_public_call(d: dict) -> None:
     """手写白名单校验（零依赖）。失败抛 LedgerReject。"""
     if not isinstance(d, dict):
         raise LedgerReject("记录必须是 JSON object")
-    extra = set(d) - WHITELIST_KEYS
+    extra = set(d) - WHITELIST_CALL_KEYS
     if extra:
         raise LedgerReject(f"白名单外字段: {sorted(extra)}")
-    missing = REQUIRED_KEYS - set(d)
+    missing = REQUIRED_CALL_KEYS - set(d)
     if missing:
         raise LedgerReject(f"缺必填字段: {sorted(missing)}")
     if not ID_PATTERN.match(str(d["id"])):
@@ -49,6 +64,32 @@ def validate_public_call(d: dict) -> None:
         raise LedgerReject(f"commit_ts_utc 非 ISO 8601: {e}") from e
     if "version" in d and not (isinstance(d["version"], int) and d["version"] >= 1):
         raise LedgerReject("version 必须为 ≥1 的整数")
+
+
+def validate_resolution(d: dict) -> None:
+    """A.2 resolution 行手写校验（零依赖）。失败抛 ResolutionReject。"""
+    if not isinstance(d, dict):
+        raise ResolutionReject("记录必须是 JSON object")
+    extra = set(d) - WHITELIST_RESOLUTION_KEYS
+    if extra:
+        raise ResolutionReject(f"白名单外字段: {sorted(extra)}")
+    missing = REQUIRED_RESOLUTION_KEYS - set(d)
+    if missing:
+        raise ResolutionReject(f"缺必填字段: {sorted(missing)}")
+    if not ID_PATTERN.match(str(d["id"])):
+        raise ResolutionReject(f"id 不匹配 {ID_PATTERN.pattern}: {d['id']!r}")
+    if d["actual"] not in ("YES", "NO"):
+        raise ResolutionReject(f"actual 取值非法: {d['actual']!r}")
+    if not isinstance(d["correct"], bool):
+        raise ResolutionReject(f"correct 必须是 bool: {d['correct']!r}")
+    if d["resolution_source"] not in ALLOWED_RESOLUTION_SOURCES:
+        raise ResolutionReject(
+            f"resolution_source 取值非法: {d['resolution_source']!r}"
+        )
+    try:
+        datetime.fromisoformat(str(d["resolved_ts_utc"]).replace("Z", "+00:00"))
+    except ValueError as e:
+        raise ResolutionReject(f"resolved_ts_utc 非 ISO 8601: {e}") from e
 
 
 def load_jsonl(path: str | Path) -> list[dict]:
@@ -100,7 +141,9 @@ def _validate_all(root: Path) -> int:
                 rec = json.loads(line)
                 if "predictions" in f.parts:
                     validate_public_call(rec)
-            except (json.JSONDecodeError, LedgerReject) as e:
+                elif "resolutions" in f.parts:
+                    validate_resolution(rec)
+            except (json.JSONDecodeError, LedgerReject, ResolutionReject) as e:
                 print(f"INVALID {f}:{i}: {e}")
                 bad += 1
     print(f"validate-all: {bad} invalid line(s) under {root}")
