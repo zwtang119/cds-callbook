@@ -52,12 +52,25 @@
 - 新增 `call-test` job：安装 `experiments/call-test/requirements-dev.txt` 后运行 `pytest experiments/call-test/tests/ -v`。
 - Commit: `5db2287` on branch `feat/call-test-v0`。
 
+### Live 前清理
+
+- PR: https://github.com/zwtang119/cds-callbook/pull/2
+- 合并 commit: `2ce485950809950ea994b869a95d53fad29a2658`
+- 清理内容：删除 `public-ledger/predictions/2026-08-02.jsonl`（仅含 synthetic `mk_t7_baseline` 一行）
+- 原因：day-1 live 前公开账本必须只含真实 call；该 synthetic 行会出现在 Pages 渲染中。
+- 预期 guard 状态：**变红**（检测到 `D public-ledger/predictions/2026-08-02.jsonl`），run https://github.com/zwtang119/cds-callbook/actions/runs/30709723007
+- 合并时 guard 状态：PR 上 guard 红；main push 上 guard 亦红（run https://github.com/zwtang119/cds-callbook/actions/runs/30709755041），因 push 事件对比 `before..HEAD` 同样检测到删除。
+- 合并后验证：
+  - `public-ledger/predictions/` 下仅余 `.gitkeep`，无 `mk_t7_baseline`
+  - `test` workflow on main push：success，run https://github.com/zwtang119/cds-callbook/actions/runs/30709755036
+  - 本地 `pytest -q`：43 passed；`validate-all public-ledger/`：0 invalid
+
 ### Skipped layers
 
 - coverage / diff-cover / mutmut / pip-audit：T7 本身只交付 CI 骨架；gauntlet 以当前已固定层（tests + lint + format + validate-all）为 pass 标准，与 T1–T6 证据一致。
 
 ### Honest notes
 
-- 为在 PR 中真实演练“修改历史行”，先在 main 上提交了一条 synthetic 基线预测行（`mk_t7_baseline`），作为 guard 的 M 检测目标。该行在合并后仍保留于 main，**未被篡改**。
+- 为在 PR 中真实演练“修改历史行”，先在 main 上提交了一条 synthetic 基线预测行（`mk_t7_baseline`），作为 guard 的 M 检测目标。演练完成后，经 owner 批准以一次性例外方式删除该文件，day-1 live 前公开账本恢复为零 synthetic 行。
 - guard 对浅历史的回退逻辑在 PR 事件中测试通过（base = `origin/main`）；push 事件回退链尚未在真实新分支 push 上触发，逻辑通过本地 `git rev-parse` 验证。
 - cds4polymarket 的 `call-test` CI job 尚未在 GitHub Actions 上实际运行（feat/call-test-v0 未合入 main），但依赖集与本地测试路径一致。
