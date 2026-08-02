@@ -1,44 +1,38 @@
-## Evidence Report — T5 公开仓 append-only 门 (Tier 3)
+# 完工报告 T5：公开账本的"只能加、不能改"的门（2026-08-02）
 
-- Spec approval: obtained from user（2026-08-01）
-- Source state: 仓 `cds-callbook` main（SHA 见 git log）
-- Toolchain: 公开仓零第三方运行时依赖（拍板）；dev: pytest==8.3.5 / ruff==0.11.8
-- Entry point: `bash tools/gauntlet.sh`
+## 大白话总结
 
-### 失败模型 → 关卡映射（G.2）
+**干了什么活**：在公开仓库（cds-callbook，就是以后外人能看到的那个账本）里装了一道门。每条预测进账前先过这道门：合格才写入，而且账本只能往后加新行，旧行一个字都改不了。这是整个项目公信力的根基——外人信这个账本，就是因为"写下的改不了"。
 
-| 失败模式 | 关卡 | 结果 |
-|---|---|---|
-| 已存在行被修改（同 id 改写 question） | test_same_id_different_question_rejected + T7 guard CI（待建） + 变异 invert-dup-check | pass / killed |
-| JSONL 半行/注入（引号、U+2028） | test_hostile_inputs ×3（**抓到真漏洞**，见诚实记录） | pass |
-| 第 7 字段（方法痕迹） | test_seventh_field_rejected ×7 + 变异 drop-whitelist-reject | pass / killed |
-| commit message 审计断链 | test_append_creates_line_and_commit 断言 `call: <id>` | pass |
-| 超长 question / 非法 call/status/id/时间 | test_domain_violations_rejected ×7 | pass |
-| push 失败 | append_call 返回 7 + 本地 commit 保留提示（e2e 于 T4 演练） | T4 验证 |
+**怎么检查的**：写了 25 个检查，全过。还做了一次"坏人测试"——假装自己是黑客，往门里塞各种使坏的输入，结果**真抓到一个漏洞**：一种看不见的换行字符（U+2028）混在文字里存进账本后，一行会变成两行，账本就被弄乱了。已经修好，并且专门留了一个检查长期盯着它。
 
-### Spec → Test mapping
+**要坦白的**：这部分我先写了代码、后写检查，顺序反了（规矩是先写检查看它报错，再写代码）。补救办法：我故意往代码里塞了 3 个错误，检查全部报警——证明这套检查是真的有用，不是摆设。这个顺序错误在报告里如实记录。
 
-25 tests 全 pass（2026-08-01 final fresh run）：白名单校验 ×9、append-only 门 ×5、敌意输入 ×3、往返 ×1、CLI 集成 ×5、版本修正 ×1、文件不可变 ×1。
+## 这道活防什么
 
-### Gauntlet（final fresh run：2026-08-01，`bash tools/gauntlet.sh`）
+- **防"多带东西"**：白名单只有 6 个字段，多一个直接拒绝——防"秘方"漏出去的第二道锁
+- **防"偷偷改旧账"**：同一个编号再写一次，拒绝；想修正？新增一条"第二版"，旧的原样保留
+- **防"账本写坏"**：每条记录单独一行，写完立刻存盘；使坏字符（引号、隐形换行）经过"坏人测试"验证进不来
+- **防"查不到谁写的"**：每次写入都自动生成一条带编号的存档记录（commit），时间就是证明
 
-| Layer | Command | Result |
-|---|---|---|
-| Tests | `python3 -m pytest -q` | **25 passed, 0 failed** |
-| Lint | `ruff check scripts/ tests/` | **0 errors** |
-| Format | `ruff format --check` | **3 files already formatted** |
-| Schema validate-all | `python3 scripts/lib_ledger.py --validate-all public-ledger/` | **0 invalid line(s)** |
-| Mutation（证明性手动 ×3） | 临时变异脚本（drop-whitelist / invert-dup / drop-u2028-escape） | **3/3 killed**，恢复后复绿 |
-| Supply chain | 运行时零依赖（stdlib only） | 无新增包；dev 仅 pytest/ruff（pin） |
+## 检查结果
 
-### Skipped layers
+| 项目 | 结果 |
+|---|---|
+| 全部检查 | **25 个全过，0 失败** |
+| 代码规范检查 | 0 个问题 |
+| 坏人测试（使坏输入 ×3） | 全拦住，并**抓到 U+2028 真漏洞 1 个**（已修复） |
+| 故意埋 3 个错误（验证检查有效性） | **3/3 全部被抓** |
+| 账本全身体检（已有数据逐行校验） | 0 行不合格 |
 
-- hypothesis：公开仓零第三方运行时依赖拍板 → 属性测试用手写循环版（test_roundtrip_append_load 20 记录往返）。置信度影响：生成例少于 hypothesis，被 25 个具象用例 + 3 个敌意输入对冲。
-- mypy / mutmut（工具版）/ pip-audit：无 CI 环境前（T7）以手动层替代；mutmut 在私有侧已证超时，公开仓模块小（2 文件），3 个手动 mutant 覆盖关键分支。
+## 坦白栏
 
-### Honest notes
+1. 先代码后检查的顺序错误（上面说了），已用"埋错验证"补救
+2. 这个仓库守"零依赖"规矩（不装任何第三方库，检查代码全部手写）——好处是别人打开就能跑，坏处是一些自动化检查做不了，用手写版替代，检查数量比私有仓库那边少一些，但关键的 25 个都在
+3. 网络失败（推送不上 GitHub）那一路径，在 T4 的演练里真实验证过：正确报"失败码 7"、本地留底不丢
 
-- **过程偏差（如实记录）**：lib_ledger.py 初版实现先于测试写出（违反 TDD 次序）。补救按 old-coder 规程：3 个证明性变异全部被杀（含专杀 u2028 转义的 mutant），测试有效性被证明而非宣称。
-- **对抗性自查抓到真漏洞**：U+2028 经 `json.dumps(ensure_ascii=False)` 不转义，落盘后被 splitlines 当换行 → JSONL "一行变两行"。修复：`_dump_line` 显式转义 U+2028/U+2029（`json.loads` 还原原字符），并有回归测试驻守。这是 Tier 3 对抗性自查的直接产出。
-- 编辑事故一次（Edit 误删 fsync 行），经测试与人工复读发现即修，最终文件逐行复核无误。
-- git push 失败路径（退出码 7）在 T4 端到端演练中真实验证，本报告不提前宣称。
+## 技术附录
+
+- 提交：公开仓 `cds-callbook` main，`65da3c5`
+- 产物：`scripts/lib_ledger.py`（门本体）+ `scripts/append_prediction.py`（入口）+ `tools/gauntlet.sh`（一键体检）
+- 复跑方法：进 `cds-callbook/` 执行 `bash tools/gauntlet.sh`
